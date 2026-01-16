@@ -11,6 +11,11 @@ if (!admin.apps.length) {
   admin.initializeApp({
     credential: admin.credential.cert(JSON.parse(serviceAccountJson)),
   });
+
+  console.log('[firebaseAdmin] Initialized');
 }
 
-module.exports = { admin };
+// ✅ define db AFTER initializeApp
+const db = admin.firestore();
+
+module.exports = { admin, db };

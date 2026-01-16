@@ -11,10 +11,9 @@ const {
   DeleteObjectCommand,
   getSignedUrl,
 } = require('../aws');
-const { admin } = require('../firebaseAdmin');
+const { admin, db } = require('../firebaseAdmin');
 
 const router = express.Router();
-const db = admin.firestore();
 
 function sanitizeFileName(name = '') {
   const onlyName = name.split('/').pop().split('\\').pop();
@@ -27,10 +26,6 @@ function getUserStorageId(uid) {
 
 /**
  * POST /api/upload-url
- * Body: { fileName, fileType }
- * Auth: Bearer <Firebase ID token>
- *
- * Returns: { uploadUrl, objectKey, bucket }
  */
 router.post('/upload-url', authMiddleware, async (req, res) => {
   try {
@@ -68,11 +63,7 @@ router.post('/upload-url', authMiddleware, async (req, res) => {
 
 /**
  * POST /api/files
- * Called AFTER successful upload to S3.
- * Body: { objectKey, originalName, mimeType, size }
- * Auth: Bearer <Firebase ID token>
- *
- * Stores file metadata in Firestore tied to uid.
+ * Save metadata in Firestore (Admin SDK)
  */
 router.post('/files', authMiddleware, async (req, res) => {
   try {
@@ -110,15 +101,11 @@ router.post('/files', authMiddleware, async (req, res) => {
 
 /**
  * GET /api/list-files
- * Auth: Bearer <Firebase ID token>
- *
- * Returns an array of file metadata for the current user.
  */
 router.get('/list-files', authMiddleware, async (req, res) => {
   try {
     const { uid } = req.user;
 
-    // Simpler query: just filter by uid, no orderBy in Firestore
     const snapshot = await db
       .collection('files')
       .where('uid', '==', uid)
@@ -129,34 +116,24 @@ router.get('/list-files', authMiddleware, async (req, res) => {
       ...doc.data(),
     }));
 
-    // Optional: sort in JS by createdAt desc
+    // optional: sort newest first in JS
     files = files.sort((a, b) => {
       const aSec =
-        a.createdAt?.seconds ??
-        a.createdAt?._seconds ??
-        0;
+        a.createdAt?.seconds ?? a.createdAt?._seconds ?? 0;
       const bSec =
-        b.createdAt?.seconds ??
-        b.createdAt?._seconds ??
-        0;
+        b.createdAt?.seconds ?? b.createdAt?._seconds ?? 0;
       return bSec - aSec;
     });
 
     return res.json({ uid, files });
   } catch (err) {
     console.error('Error listing files:', err);
-    // send back the real message so you can see it in RN too
     res.status(500).json({ error: err.message || 'Failed to list files' });
   }
 });
 
 /**
  * POST /api/download-url
- * Body: { objectKey }
- * Auth: Bearer <Firebase ID token>
- *
- * Verifies that the requested objectKey belongs to this uid,
- * then returns a pre-signed GET URL for downloading.
  */
 router.post('/download-url', authMiddleware, async (req, res) => {
   try {
@@ -167,7 +144,6 @@ router.post('/download-url', authMiddleware, async (req, res) => {
 
     const { uid } = req.user;
 
-    // Ensure this objectKey belongs to this user
     const snapshot = await db
       .collection('files')
       .where('uid', '==', uid)
@@ -203,10 +179,7 @@ router.post('/download-url', authMiddleware, async (req, res) => {
 
 /**
  * DELETE /api/files/:id
- * Auth: Bearer <Firebase ID token>
- *
- * Deletes the file's S3 object AND its Firestore metadata,
- * but only if it belongs to the current uid.
+ * Delete S3 + Firestore
  */
 router.delete('/files/:id', authMiddleware, async (req, res) => {
   try {
@@ -226,9 +199,10 @@ router.delete('/files/:id', authMiddleware, async (req, res) => {
 
     const data = snapshot.data();
 
-    // extra safety: ensure this doc belongs to the current user
     if (data.uid !== uid) {
-      return res.status(403).json({ error: 'Not authorized to delete this file' });
+      return res
+        .status(403)
+        .json({ error: 'Not authorized to delete this file' });
     }
 
     const objectKey = data.objectKey;
@@ -236,14 +210,14 @@ router.delete('/files/:id', authMiddleware, async (req, res) => {
       return res.status(500).json({ error: 'File metadata missing objectKey' });
     }
 
-    // 1) Delete from S3
+    // Delete from S3
     const deleteCmd = new DeleteObjectCommand({
       Bucket: S3_BUCKET,
       Key: objectKey,
     });
     await s3.send(deleteCmd);
 
-    // 2) Delete from Firestore
+    // Delete metadata
     await docRef.delete();
 
     return res.json({ success: true });
