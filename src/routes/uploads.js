@@ -64,14 +64,31 @@ router.post('/upload-url', authMiddleware, async (req, res) => {
 /**
  * POST /api/files
  * Save metadata in Firestore (Admin SDK)
+ * Now also stores encryption metadata needed for decrypt:
+ * - contentEnc (ivB64, macB64, etc.)
+ * - fileKeyWrap (EtM envelope of the per-file key wrapped under vault key)
  */
 router.post('/files', authMiddleware, async (req, res) => {
   try {
-    const { objectKey, originalName, mimeType, size } = req.body;
+    const { objectKey, originalName, mimeType, size, contentEnc, fileKeyWrap } = req.body;
+
     if (!objectKey || !originalName || !mimeType) {
       return res.status(400).json({
         error: 'objectKey, originalName, and mimeType are required',
       });
+    }
+
+    // Optional: basic validation to fail fast with a clear error
+    // (helps you catch older clients that forgot to send these)
+    if (contentEnc) {
+      if (!contentEnc.ivB64 || !contentEnc.macB64) {
+        return res.status(400).json({ error: 'contentEnc must include ivB64 and macB64' });
+      }
+    }
+    if (fileKeyWrap) {
+      if (!fileKeyWrap.ivB64 || !fileKeyWrap.ctB64 || !fileKeyWrap.macB64) {
+        return res.status(400).json({ error: 'fileKeyWrap must include ivB64, ctB64, and macB64' });
+      }
     }
 
     const { uid } = req.user;
@@ -85,6 +102,11 @@ router.post('/files', authMiddleware, async (req, res) => {
       originalName,
       mimeType,
       size: size || null,
+
+      // ✅ store encryption metadata (server never decrypts; just stores opaque blobs)
+      contentEnc: contentEnc || null,
+      fileKeyWrap: fileKeyWrap || null,
+
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
     });
 
@@ -224,6 +246,38 @@ router.delete('/files/:id', authMiddleware, async (req, res) => {
   } catch (err) {
     console.error('Error deleting file:', err);
     res.status(500).json({ error: 'Failed to delete file' });
+  }
+});
+
+/**
+ * GET /api/files/:id/meta
+ * Return file metadata for the authenticated user
+ */
+router.get('/files/:id/meta', authMiddleware, async (req, res) => {
+  try {
+    const { uid } = req.user;
+    const fileId = req.params.id;
+
+    const docRef = db.collection('files').doc(fileId);
+    const snap = await docRef.get();
+
+    if (!snap.exists) {
+      return res.status(404).json({ error: 'File not found' });
+    }
+
+    const data = snap.data();
+
+    if (data.uid !== uid) {
+      return res.status(403).json({ error: 'Not authorized' });
+    }
+
+    return res.json({
+      id: snap.id,
+      ...data,
+    });
+  } catch (err) {
+    console.error('Error loading file meta:', err);
+    return res.status(500).json({ error: 'Failed to load file metadata' });
   }
 });
 
