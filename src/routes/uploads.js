@@ -70,7 +70,7 @@ router.post('/upload-url', authMiddleware, async (req, res) => {
  */
 router.post('/files', authMiddleware, async (req, res) => {
   try {
-    const { objectKey, originalName, mimeType, size, contentEnc, fileKeyWrap } = req.body;
+    const { objectKey, originalName, mimeType, size, contentEnc, fileKeyWrap, thumbnailEnc } = req.body;
 
     if (!objectKey || !originalName || !mimeType) {
       return res.status(400).json({
@@ -106,6 +106,7 @@ router.post('/files', authMiddleware, async (req, res) => {
       // ✅ store encryption metadata (server never decrypts; just stores opaque blobs)
       contentEnc: contentEnc || null,
       fileKeyWrap: fileKeyWrap || null,
+      thumbnailEnc: thumbnailEnc || null,
 
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
     });
@@ -278,6 +279,43 @@ router.get('/files/:id/meta', authMiddleware, async (req, res) => {
   } catch (err) {
     console.error('Error loading file meta:', err);
     return res.status(500).json({ error: 'Failed to load file metadata' });
+  }
+});
+
+/**
+ * PATCH /api/files/:id/thumbnail
+ * Backfill an encrypted thumbnail for an existing file
+ */
+router.patch('/files/:id/thumbnail', authMiddleware, async (req, res) => {
+  try {
+    const { uid } = req.user;
+    const fileId = req.params.id;
+    const { thumbnailEnc } = req.body;
+
+    if (!thumbnailEnc) {
+      return res.status(400).json({ error: 'thumbnailEnc is required' });
+    }
+
+    // Size guard (~20KB max for the encrypted envelope)
+    if (JSON.stringify(thumbnailEnc).length > 20000) {
+      return res.status(400).json({ error: 'Thumbnail too large' });
+    }
+
+    const docRef = db.collection('files').doc(fileId);
+    const snap = await docRef.get();
+
+    if (!snap.exists) {
+      return res.status(404).json({ error: 'File not found' });
+    }
+    if (snap.data().uid !== uid) {
+      return res.status(403).json({ error: 'Not authorized' });
+    }
+
+    await docRef.update({ thumbnailEnc });
+    return res.json({ success: true });
+  } catch (err) {
+    console.error('Error updating thumbnail:', err);
+    res.status(500).json({ error: 'Failed to update thumbnail' });
   }
 });
 
