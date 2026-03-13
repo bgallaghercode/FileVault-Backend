@@ -70,7 +70,7 @@ router.post('/upload-url', authMiddleware, async (req, res) => {
  */
 router.post('/files', authMiddleware, async (req, res) => {
   try {
-    const { objectKey, originalName, mimeType, size, contentEnc, fileKeyWrap, thumbnailEnc } = req.body;
+    const { objectKey, originalName, mimeType, size, contentEnc, fileKeyWrap, thumbnailEnc, folderId } = req.body;
 
     if (!objectKey || !originalName || !mimeType) {
       return res.status(400).json({
@@ -107,6 +107,7 @@ router.post('/files', authMiddleware, async (req, res) => {
       contentEnc: contentEnc || null,
       fileKeyWrap: fileKeyWrap || null,
       thumbnailEnc: thumbnailEnc || null,
+      folderId: folderId || null,
 
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
     });
@@ -128,6 +129,7 @@ router.post('/files', authMiddleware, async (req, res) => {
 router.get('/list-files', authMiddleware, async (req, res) => {
   try {
     const { uid } = req.user;
+    const folderId = req.query.folderId || null;
 
     const snapshot = await db
       .collection('files')
@@ -139,7 +141,15 @@ router.get('/list-files', authMiddleware, async (req, res) => {
       ...doc.data(),
     }));
 
-    // optional: sort newest first in JS
+    // Filter by folder (in JS for backward compat with old docs missing folderId)
+    if (folderId) {
+      files = files.filter((f) => f.folderId === folderId);
+    } else {
+      // Root: show files with no folderId (null, undefined, or missing)
+      files = files.filter((f) => !f.folderId);
+    }
+
+    // Sort newest first
     files = files.sort((a, b) => {
       const aSec =
         a.createdAt?.seconds ?? a.createdAt?._seconds ?? 0;
