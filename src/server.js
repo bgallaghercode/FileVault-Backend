@@ -5,6 +5,7 @@ const cors = require('cors');
 
 const uploadsRouter = require('./routes/uploads');
 const healthRouter = require('./routes/health');
+const foldersRouter = require('./routes/folders');
 
 const app = express();
 
@@ -14,6 +15,7 @@ app.use(express.json());
 // Routes
 app.use('/api', healthRouter);
 app.use('/api', uploadsRouter);
+app.use('/api', foldersRouter);
 
 const port = process.env.PORT || 4000;
 app.listen(port, () => {
