@@ -293,6 +293,74 @@ router.get('/files/:id/meta', authMiddleware, async (req, res) => {
 });
 
 /**
+ * PATCH /api/files/:id/move
+ * Move a file to a different folder
+ */
+router.patch('/files/:id/move', authMiddleware, async (req, res) => {
+  try {
+    const { uid } = req.user;
+    const fileId = req.params.id;
+    const { folderId } = req.body; // null = root
+
+    const docRef = db.collection('files').doc(fileId);
+    const snap = await docRef.get();
+
+    if (!snap.exists) {
+      return res.status(404).json({ error: 'File not found' });
+    }
+    if (snap.data().uid !== uid) {
+      return res.status(403).json({ error: 'Not authorized' });
+    }
+
+    // Validate target folder exists and belongs to user (if not root)
+    if (folderId) {
+      const folderSnap = await db.collection('folders').doc(folderId).get();
+      if (!folderSnap.exists || folderSnap.data().uid !== uid) {
+        return res.status(400).json({ error: 'Target folder not found' });
+      }
+    }
+
+    await docRef.update({ folderId: folderId || null });
+    return res.json({ success: true });
+  } catch (err) {
+    console.error('Error moving file:', err);
+    res.status(500).json({ error: 'Failed to move file' });
+  }
+});
+
+/**
+ * PATCH /api/files/:id
+ * Rename a file (update originalName)
+ */
+router.patch('/files/:id', authMiddleware, async (req, res) => {
+  try {
+    const { uid } = req.user;
+    const fileId = req.params.id;
+    const { originalName } = req.body;
+
+    if (!originalName || !originalName.trim()) {
+      return res.status(400).json({ error: 'originalName is required' });
+    }
+
+    const docRef = db.collection('files').doc(fileId);
+    const snap = await docRef.get();
+
+    if (!snap.exists) {
+      return res.status(404).json({ error: 'File not found' });
+    }
+    if (snap.data().uid !== uid) {
+      return res.status(403).json({ error: 'Not authorized' });
+    }
+
+    await docRef.update({ originalName: originalName.trim() });
+    return res.json({ success: true });
+  } catch (err) {
+    console.error('Error renaming file:', err);
+    res.status(500).json({ error: 'Failed to rename file' });
+  }
+});
+
+/**
  * PATCH /api/files/:id/thumbnail
  * Backfill an encrypted thumbnail for an existing file
  */
