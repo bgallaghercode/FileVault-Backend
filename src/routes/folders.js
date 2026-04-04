@@ -114,6 +114,58 @@ router.patch('/folders/:id', authMiddleware, async (req, res) => {
 });
 
 /**
+ * PATCH /api/folders/:id/move
+ * Move a folder to a different parent folder
+ */
+router.patch('/folders/:id/move', authMiddleware, async (req, res) => {
+  try {
+    const { uid } = req.user;
+    const folderId = req.params.id;
+    const { parentFolderId } = req.body; // null = root
+
+    const docRef = db.collection('folders').doc(folderId);
+    const snap = await docRef.get();
+
+    if (!snap.exists) {
+      return res.status(404).json({ error: 'Folder not found' });
+    }
+    if (snap.data().uid !== uid) {
+      return res.status(403).json({ error: 'Not authorized' });
+    }
+
+    // Cannot move folder into itself
+    if (parentFolderId === folderId) {
+      return res.status(400).json({ error: 'Cannot move a folder into itself' });
+    }
+
+    // Validate target folder exists and belongs to user (if not root)
+    if (parentFolderId) {
+      const targetSnap = await db.collection('folders').doc(parentFolderId).get();
+      if (!targetSnap.exists || targetSnap.data().uid !== uid) {
+        return res.status(400).json({ error: 'Target folder not found' });
+      }
+
+      // Walk up from target to root to ensure we're not creating a cycle
+      let current = parentFolderId;
+      while (current) {
+        if (current === folderId) {
+          return res.status(400).json({ error: 'Cannot move a folder into one of its subfolders' });
+        }
+        const ancestor = await db.collection('folders').doc(current).get();
+        if (!ancestor.exists) break;
+        current = ancestor.data().parentFolderId || null;
+      }
+    }
+
+    await docRef.update({ parentFolderId: parentFolderId || null });
+    return res.json({ success: true });
+  } catch (err) {
+    console.error('Error moving folder:', err);
+    res.status(500).json({ error: 'Failed to move folder' });
+  }
+});
+
+/**
  * DELETE /api/folders/:id
  * Delete a folder and all its contents recursively
  */
